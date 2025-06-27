@@ -42,6 +42,8 @@ class Board:
         self.width = w
         self.height = h
         self.board = [[Cell() for _ in range(h)] for _ in range(w)]
+        self.uncovered = 0
+        self.total_mines = 0
 
     def place_mines(self, n):
         mine_locations = random.sample(list(range(self.width * self.height)), n)
@@ -53,6 +55,8 @@ class Board:
             for nx, ny in self.neighbor_coords(x, y):
                 if not self.board[nx][ny].is_mine():
                     self.board[nx][ny].value += 1
+
+        self.total_mines = n
 
     def neighbor_coords(self, x, y):
         (xnleft, xnright, yntop, ynbottom) = (x != 0, x != self.width - 1, y != 0, y != self.height - 1)
@@ -86,25 +90,64 @@ class Board:
         cell = self.board[x][y]
         if not cell.is_uncovered():
             if cell.uncover():
-                return -1
+                return -1, True
             acc = 1
             if cell.value == 0: # clear everything around it as well (guaranteed safe)
                 for nx, ny in self.neighbor_coords(x, y):
                     if not self.board[nx][ny].is_uncovered():
-                        acc += self.click(nx, ny)
-            return acc
+                        r, terminated = self.click(nx, ny)
+                        acc += r
+                        if terminated:
+                            return acc, terminated
+            self.uncovered += acc
+            return acc, self.uncovered + self.total_mines == self.width * self.height
         else:
             if cell.value > 0 and sum(1 if self.board[nx][ny].is_flagged() else 0 for (nx, ny) in self.neighbor_coords(x, y)) == cell.value:
-                if all(self.board[nx][ny].uncover() for (nx, ny) in self.neighbor_coords(x, y) if not self.board[nx][ny].is_flagged()):
-                    return 9 - cell.value
+                still_covered = list(self.board[nx][ny] for (nx, ny) in self.neighbor_coords(x, y) if not self.board[nx][ny].is_uncovered())
+                if all(cell.uncover() for cell in still_covered):
+                    amt = len(still_covered)
+                    self.uncovered += amt
+                    return amt, self.uncovered + self.total_mines == self.width * self.height
                 else:
-                    return -1
+                    return -1, True
             # do nothing
-            return 0
+            return 0, False
         
+    def safe_click(self):
+        # click somewhere guaranteed safe, with preference for lower-valued cells
+        candidates = []
+        maximum = 8
+        for x in self.width:
+            for y in self.height:
+                if not self.board[x][y].is_mine():
+                    if self.board[x][y].value == maximum:
+                        candidates.append((x, y))
+                    elif self.board[x][y].value < maximum:
+                        candidates = [(x, y)]
+                        maximum = self.board[x][y].value
+        x, y = random.choice(candidates)
+        self.click(x, y)
+
     def flag(self, x, y):
         cell = self.board[x][y]
         if not cell.is_uncovered():
             cell.toggle_flag()
             return 1
         return 0
+    
+    def model_state(self):
+        l = []
+        for i in range(10):
+            if i == 8:
+                l.append(list(
+                    list(1 if not cell.is_uncovered() else 0 for cell in col) for col in self.board
+                ))
+            elif i == 9:
+                l.append(list(
+                    list(1 if cell.is_flagged() else 0 for cell in col) for col in self.board
+                ))
+            else:
+                l.append(list(
+                    list(1 if cell.is_uncovered() and cell.value == i else 0 for cell in col) for col in self.board
+                ))
+        return l
