@@ -117,8 +117,8 @@ class Board:
         # click somewhere guaranteed safe, with preference for lower-valued cells
         candidates = []
         maximum = 8
-        for x in self.width:
-            for y in self.height:
+        for x in range(self.width):
+            for y in range(self.height):
                 if not self.board[x][y].is_mine():
                     if self.board[x][y].value == maximum:
                         candidates.append((x, y))

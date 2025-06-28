@@ -28,7 +28,7 @@ class MinesweeperActor(torch.nn.Module):
     def __init__(self, w, h):
         super().__init__()
         self.actor_mlp = torch.nn.Sequential(
-            torch.nn.Linear((w - 1) * (h - 1), 500),
+            torch.nn.Linear((w - 2) * (h - 2), 500),
             torch.nn.ReLU(),
             torch.nn.Linear(500, 500),
             torch.nn.ReLU(),
@@ -37,15 +37,12 @@ class MinesweeperActor(torch.nn.Module):
         )
         self.x_net = torch.nn.Sequential(
             torch.nn.Linear(50, w),
-            torch.nn.Softmax(dim=-1)
         )
         self.y_net = torch.nn.Sequential(
             torch.nn.Linear(50, h),
-            torch.nn.Softmax(dim=-1)
         )
         self.action_net = torch.nn.Sequential(
             torch.nn.Linear(50, 2),
-            torch.nn.Softmax(dim=-1)
         )
 
     def forward(self, conv_out):
@@ -57,7 +54,13 @@ class MinesweeperActor(torch.nn.Module):
     
     def dists(self, conv_out):
         v = self.actor_mlp(conv_out)
-        x_dist, y_dist, a_dist = Categorical(self.x_net(v)), Categorical(self.y_net(v)), Categorical(self.action_net(v))
+        x_logits = self.x_net(v)
+        y_logits = self.y_net(v)
+        a_logits = self.action_net(v)
+        assert torch.isfinite(x_logits).all()
+        assert torch.isfinite(y_logits).all()
+        assert torch.isfinite(a_logits).all()
+        x_dist, y_dist, a_dist = Categorical(logits=x_logits), Categorical(logits=y_logits), Categorical(logits=a_logits)
         return x_dist, y_dist, a_dist
 
 
@@ -74,7 +77,7 @@ class MinesweeperActorCritic(torch.nn.Module):
 
         # critic
         self.critic = torch.nn.Sequential(
-            torch.nn.Linear((w - 1) * (h - 1), 500),
+            torch.nn.Linear((w - 2) * (h - 2), 500),
             torch.nn.ReLU(),
             torch.nn.Linear(500, 50),
             torch.nn.ReLU(),
@@ -83,14 +86,16 @@ class MinesweeperActorCritic(torch.nn.Module):
     
     def act(self, state):
         v = self.conv_layer(state)
+        v = v.view(v.size(0), -1)
         concatted_action, log_probs = self.actor(v)
         state_val = self.critic(v)
         return concatted_action, log_probs, state_val.detach()
     
     def evaluate(self, state, action):
         v = self.conv_layer(state)
+        v = v.view(v.size(0), -1)
         x_dist, y_dist, a_dist = self.actor.dists(v)
-        x, y, a = torch.split(action, [self.w, self.h, 2], dim=0)
+        x, y, a = action[:, 0], action[:, 1], action[:, 2]
 
         action_logprobs = x_dist.log_prob(x) + y_dist.log_prob(y) + a_dist.log_prob(a)
         entropy = x_dist.entropy() + y_dist.entropy() + a_dist.entropy()
@@ -128,7 +133,7 @@ class PPO:
         self.buffer.logprobs.append(action_logprob)
         self.buffer.state_values.append(state_val)
 
-        return action.item()
+        return action
     
     def update(self):
         rewards = []
@@ -163,10 +168,10 @@ class PPO:
 
             # Finding Surrogate Loss  
             surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages
+            surr2 = torch.clamp(ratios, 1-self.clip, 1+self.clip) * advantages
 
             # final loss of clipped objective PPO
-            loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
+            loss = -torch.min(surr1, surr2) + 0.5 * self.loss(state_values, rewards) - 0.01 * dist_entropy
             
             # take gradient step
             self.optimizer.zero_grad()
