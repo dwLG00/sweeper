@@ -5,15 +5,14 @@ import os
 from pathlib import Path
 import time
 
-def rollout(model: PPO, gym: MinesweeperGym):
+def rollout(model: PPO, gym: MinesweeperGym, pretrain=False):
     state = gym.reset()
     current_ep_reward = 0
-    max_ep_len = model.w * model.h * 2
-    success = False
+    max_ep_len = model.w * model.h # any more and you are doing something really wrong
     terminated = False
     for n_actions in range(max_ep_len):
         action = model.select_action(state)
-        state, reward, done = gym.step(action)
+        state, reward, done = gym.step(action) if not pretrain else gym.early_epoch_step(action)
         model.buffer.rewards.append(reward)
         model.buffer.is_terminals.append(done)
         current_ep_reward += reward
@@ -26,11 +25,14 @@ def train(log_dir, save_dir, train_for_epochs=-1):
     K_epochs = 100
     update_eps = 4
     log_every = 40
+    pretrain_epochs = 5000
+    
+    K_epochs = 100
     clip = 0.2
     gamma = 0.99 # reward decay
-    lr_actor = 0.0003
+    lr_actor = 0.0001
     lr_critic = 0.001
-    lr_conv = 0.0001
+    lr_conv = 0.001
 
     width, height, n_mines = 50, 20, 299
     ppo = PPO(width, height, lr_actor, lr_critic, lr_conv, gamma, K_epochs, clip)
@@ -59,7 +61,7 @@ def train(log_dir, save_dir, train_for_epochs=-1):
     now = time.time()
     eps_rewards, eps_actions, eps_terminated = [], [], []
     for epoch in iterator:
-        eps_reward, n_actions, terminated = rollout(ppo, gym)
+        eps_reward, n_actions, terminated = rollout(ppo, gym, pretrain=epoch<pretrain_epochs)
         eps_rewards.append(eps_reward)
         eps_actions.append(n_actions)
         eps_terminated.append(terminated)

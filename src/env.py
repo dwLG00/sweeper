@@ -37,6 +37,30 @@ class MinesweeperGym:
             score = -100 if r == 0 else -5
             return state, score, False
         
+    def early_epoch_step(self, action: torch.Tensor):
+        # run for first n steps as pretraining
+        w, h = self.shape
+        x, y, a = action[0], action[1], action[2]
+
+        if a == 0:
+            r, terminate = self.board.click(x, y)
+            state = self.get_state()
+            if r == -1: # don't penalize clicking mines, if the mine that was clicked was next to uncovered cell
+                if any(self.board.board[nx][ny].is_uncovered() for (nx, ny) in self.board.neighbor_coords(x, y)):
+                    return state, 0, True
+                else:
+                    return state, -w*h, True
+            else:
+                if r == 0: # heavily penalize doing nothing
+                    return state, -w*h / 10, False
+                if terminate:
+                    r += w * h
+                return state, r * 10, terminate # inflate clicking on a non-mine
+        if a == 1: # discourage flagging
+            r = self.board.flag(x, y)
+            state = self.get_state()
+            return state, -w*h / 10, False
+        
     def reset(self):
         w, h = self.shape
         self.board = Board(w, h)

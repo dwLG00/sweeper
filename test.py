@@ -24,7 +24,8 @@ def test(model: PPO, t=1.5):
         time.sleep(t)
 
 if __name__ == '__main__':
-    model_path = 'training/saved_models/first_serious_run/PPO_399.pth'
+    model_path = 'training/saved_models/sixth_serious_run/PPO_5079.pth'
     model = PPO(50, 20, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01) #only the first 2 args matter
     model.load(model_path)
-    test(model)
+    while True:
+        test(model, t=0.5)
