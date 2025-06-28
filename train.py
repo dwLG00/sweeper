@@ -1,9 +1,12 @@
 from src.model import PPO
 from src.env import MinesweeperGym
+from src.data import generate_pretraining_data
 import itertools
 import os
 from pathlib import Path
 import time
+import torch
+from tqdm import tqdm
 
 def rollout(model: PPO, gym: MinesweeperGym, pretrain=False):
     state = gym.reset()
@@ -21,11 +24,39 @@ def rollout(model: PPO, gym: MinesweeperGym, pretrain=False):
             break
     return current_ep_reward, n_actions, terminated
 
+def pretrain(model: PPO, w, h, n, epochs=1, n_eps=10000):
+    conv_layer = model.policy.conv_layer
+    critic_layer = model.policy.critic
+
+    print('[*] Generating pretraining dataset...')
+    dataloader = generate_pretraining_data(w, h, n, n_eps=n_eps)
+
+    loss_fn = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam([
+        {'params': conv_layer.parameters(), 'lr': 0.001},
+        {'params': critic_layer.parameters(), 'lr': 0.001}
+    ])
+
+    print('[*] Running pretraining...')
+
+    for i in range(epochs):
+        print('[i] Epoch %s' % (i + 1))
+        for (xb, yb) in tqdm(dataloader):
+            x = conv_layer(xb)
+            scores = critic_layer(x)
+            losses = loss_fn(scores, yb)
+            optimizer.zero_grad()
+            losses.mean().backward()
+            optimizer.step()
+
+    print('[*] Copying over model configuration...')
+    model.policy_old.load_state_dict(model.policy.state_dict())
+
 def train(log_dir, save_dir, train_for_epochs=-1):
     K_epochs = 100
     update_eps = 4
     log_every = 40
-    pretrain_epochs = 5000
+    pretrain_epochs = 0
     
     K_epochs = 100
     clip = 0.2
@@ -49,6 +80,8 @@ def train(log_dir, save_dir, train_for_epochs=-1):
         os.makedirs(save_dir, exist_ok=True)
 
     checkpoint_path = lambda checkpoint_name: save_dir / ('PPO_%s.pth' % checkpoint_name)
+
+    pretrain(ppo, width, height, n_mines)
 
     print('[*] Starting Training')
     print('[H] K_epochs: %s\t update_eps: %s\t clip: %s\t gamma: %s' % (K_epochs, update_eps, clip, gamma))

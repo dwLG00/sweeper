@@ -159,3 +159,16 @@ class Board:
                     list(1 if cell.is_uncovered() and cell.value == i else 0 for cell in col) for col in self.board
                 ))
         return l
+    
+    def surrogate_eval(self):
+        score = 0
+        for x in range(self.width):
+            for y in range(self.height):
+                if self.board[x][y].is_uncovered() and not self.board[x][y].is_mine():
+                    score += 1
+                    if all(not self.board[nx][ny].is_uncovered() for (nx, ny) in self.neighbor_coords(x, y)):
+                        score -= 20
+                if self.board[x][y].is_flagged():
+                    if all(not self.board[nx][ny].is_uncovered() for (nx, ny) in self.neighbor_coords(x, y)): # bad location
+                        score -= 100
+        return score / (self.width * self.height)

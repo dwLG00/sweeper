@@ -24,34 +24,49 @@ class RolloutBuffer:
         del self.state_values[:]
         del self.is_terminals[:]
 
+class MinesweeperConv(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv_layer = torch.nn.Conv2d(in_channels=10, out_channels=3, kernel_size=3, stride=1)
+
+    def forward(self, x):
+        x = self.conv_layer(x)
+        if len(x.shape) == 3: # no batch dim
+            x = torch.unsqueeze(x, dim=0)
+        x = x.view(x.shape[0], -1) # shape should be (n, (w - 2) * (h - 2) * 3)
+        return x
+
+
 class MinesweeperActor(torch.nn.Module):
     def __init__(self, w, h):
         super().__init__()
+        intermediate_dim = int(w * h * 2.5)
         self.actor_mlp = torch.nn.Sequential(
-            torch.nn.Linear((w - 2) * (h - 2), 500),
+            torch.nn.Linear((w - 2) * (h - 2) * 3, w * h * 3),
             torch.nn.ReLU(),
-            torch.nn.Linear(500, 500),
+            torch.nn.Linear(w * h * 3, intermediate_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(500, 50),
-            torch.nn.ReLU()
-        )
-        self.x_net = torch.nn.Sequential(
-            torch.nn.Linear(50, w),
-        )
-        self.y_net = torch.nn.Sequential(
-            torch.nn.Linear(50, h),
-        )
-        self.action_net = torch.nn.Sequential(
-            torch.nn.Linear(50, 2),
+            torch.nn.Linear(intermediate_dim, w * h * 2)
         )
 
     def forward(self, conv_out):
+        v = self.actor_mlp(conv_out)
+        dist = Categorical(logits=v)
+        output = dist.sample()
+        log_prob = dist.log_prob(output).detach()
+        return output.detach(), log_prob
+        '''
         x_dist, y_dist, a_dist = self.dists(conv_out)
         x, y, a = x_dist.sample(), y_dist.sample(), a_dist.sample()
         log_probs = x_dist.log_prob(x).detach() + y_dist.log_prob(y).detach() + a_dist.log_prob(a).detach()
         concatted_action = torch.cat((x.detach(), y.detach(), a.detach()))
         return concatted_action, log_probs
+        '''
     
+    def dist(self, conv_out):
+        return Categorical(logits=self.actor_mlp(conv_out))
+    
+    '''
     def dists(self, conv_out):
         v = self.actor_mlp(conv_out)
         x_logits = self.x_net(v)
@@ -62,6 +77,7 @@ class MinesweeperActor(torch.nn.Module):
         assert torch.isfinite(a_logits).all()
         x_dist, y_dist, a_dist = Categorical(logits=x_logits), Categorical(logits=y_logits), Categorical(logits=a_logits)
         return x_dist, y_dist, a_dist
+    '''
 
 
 
@@ -70,38 +86,32 @@ class MinesweeperActorCritic(torch.nn.Module):
         super().__init__()
         self.w = w
         self.h = h
-        self.conv_layer = torch.nn.Conv2d(in_channels=10, out_channels=1, kernel_size=3, stride=1)
+        self.conv_layer = MinesweeperConv()
 
         # actor
         self.actor = MinesweeperActor(w, h)
 
         # critic
         self.critic = torch.nn.Sequential(
-            torch.nn.Linear((w - 2) * (h - 2), 500),
+            torch.nn.Linear((w - 2) * (h - 2) * 3, 500),
             torch.nn.ReLU(),
-            torch.nn.Linear(500, 50),
-            torch.nn.ReLU(),
-            torch.nn.Linear(50, 1)
+            torch.nn.Linear(500, 1)
         )
     
     def act(self, state):
         v = self.conv_layer(state)
-        v = v.view(v.size(0), -1)
-        concatted_action, log_probs = self.actor(v)
+        action, log_probs = self.actor(v)
         state_val = self.critic(v)
-        return concatted_action, log_probs, state_val.detach()
+        return action, log_probs, state_val.detach()
     
     def evaluate(self, state, action):
         v = self.conv_layer(state)
-        v = v.view(v.size(0), -1)
-        x_dist, y_dist, a_dist = self.actor.dists(v)
-        x, y, a = action[:, 0], action[:, 1], action[:, 2]
-
-        action_logprobs = x_dist.log_prob(x) + y_dist.log_prob(y) + a_dist.log_prob(a)
-        entropy = x_dist.entropy() + y_dist.entropy() + a_dist.entropy()
+        dist = self.actor.dist(v)
+        log_prob = dist.log_prob(action)
+        entropy = dist.entropy()
         state_values = self.critic(v)
 
-        return action_logprobs, state_values, entropy
+        return log_prob, state_values, entropy
 
 class PPO:
     def __init__(self, w, h, lr_actor, lr_critic, lr_conv, gamma, K_epochs, clip):

@@ -15,7 +15,8 @@ class MinesweeperGym:
     
     def step(self, action: torch.Tensor):
         w, h = self.shape
-        x, y, a = action[0], action[1], action[2]
+        raw_val = action[0]
+        x, y, a = raw_val % w, (raw_val // w) % h, raw_val // (w * h)
 
         if a == 0: # click
             prev_hidden = self.board.uncovered
@@ -40,7 +41,8 @@ class MinesweeperGym:
     def early_epoch_step(self, action: torch.Tensor):
         # run for first n steps as pretraining
         w, h = self.shape
-        x, y, a = action[0], action[1], action[2]
+        raw_val = action[0]
+        x, y, a = raw_val % w, (raw_val // w) % h, raw_val // (w * h)
 
         if a == 0:
             r, terminate = self.board.click(x, y)
