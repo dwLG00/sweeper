@@ -28,13 +28,17 @@ class Cell:
     def is_flagged(self):
         return self.flagged
     
-    def display(self):
+    def display(self, clicked=False):
         if self.uncovered:
             if self.is_mine():
-                return MINE
+                return '\033[31m' + MINE + '\033[0m'
             else:
+                if clicked:
+                    return '\033[32m' + str(self.value) + '\033[0m'
                 return str(self.value)
         else:
+            if self.is_flagged():
+                return '\033[31m' + 'F' + '\033[0m'
             return COVERED
 
 class Board:
@@ -77,12 +81,16 @@ class Board:
         if ynbottom:
             yield (x, y + 1)
     
-    def display(self):
+    def display(self, clicked=None):
         # annoying, we can't print row by row bc our coord system so we'll just iterate
+        cx, cy = clicked if clicked else (-1, -1)
         for y in range(self.height):
             buffer = []
             for x in range(self.width):
-                buffer.append(self.board[x][y].display())
+                if x == cx and y == cy:
+                    buffer.append(self.board[x][y].display(clicked=True))
+                else:
+                    buffer.append(self.board[x][y].display())
             print(''.join(buffer))
 
     def click(self, x, y):

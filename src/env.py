@@ -18,6 +18,7 @@ class MinesweeperGym:
         x, y, a = action[0], action[1], action[2]
 
         if a == 0: # click
+            prev_hidden = self.board.uncovered
             r, terminate = self.board.click(x, y)
             state = self.get_state()
             if r == -1: # clicked a mine
@@ -27,12 +28,14 @@ class MinesweeperGym:
                     return state, -1, False
                 if terminate:
                     r += w * h
-                return state, r, terminate
+                ratio = 1 + r / prev_hidden
+                return state, r * ratio, terminate
             
         if a == 1:
             r = self.board.flag(x, y)
             state = self.get_state()
-            return state, r - 1, False
+            score = -100 if r == 0 else -5
+            return state, score, False
         
     def reset(self):
         w, h = self.shape

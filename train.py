@@ -3,6 +3,7 @@ from src.env import MinesweeperGym
 import itertools
 import os
 from pathlib import Path
+import time
 
 def rollout(model: PPO, gym: MinesweeperGym):
     state = gym.reset()
@@ -35,13 +36,15 @@ def train(log_dir, save_dir, train_for_epochs=-1):
     ppo = PPO(width, height, lr_actor, lr_critic, lr_conv, gamma, K_epochs, clip)
     gym = MinesweeperGym(width, height, n_mines)
 
-    log_dir = Path(log_dir)
+    subdir = Path(input('Save subdir: '))
+
+    log_dir = Path(log_dir) / subdir
     if not os.path.exists(log_dir):
-        os.mkdir(log_dir)
+        os.makedirs(log_dir, exist_ok=True)
     
-    save_dir = Path(save_dir)
+    save_dir = Path(save_dir) / subdir
     if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
+        os.makedirs(save_dir, exist_ok=True)
 
     checkpoint_path = lambda checkpoint_name: save_dir / ('PPO_%s.pth' % checkpoint_name)
 
@@ -53,6 +56,7 @@ def train(log_dir, save_dir, train_for_epochs=-1):
 
     iterator = itertools.count() if train_for_epochs < 0 else range(train_for_epochs)
 
+    now = time.time()
     eps_rewards, eps_actions, eps_terminated = [], [], []
     for epoch in iterator:
         eps_reward, n_actions, terminated = rollout(ppo, gym)
@@ -60,7 +64,7 @@ def train(log_dir, save_dir, train_for_epochs=-1):
         eps_actions.append(n_actions)
         eps_terminated.append(terminated)
 
-        if epoch % update_eps == 0:
+        if epoch % update_eps == update_eps - 1:
             ppo.update()
 
         if epoch % log_every == log_every - 1:
@@ -69,6 +73,8 @@ def train(log_dir, save_dir, train_for_epochs=-1):
             rate_terminated = sum(1 if t else 0 for t in eps_terminated)
             rate_solved = sum(1 if eps_rewards[i] >= 0 and eps_terminated[i] else 0 for i in range(log_every))
             rate_failed = sum(1 if eps_rewards[i] < 0 and eps_terminated[i] else 0 for i in range(log_every))
+            elapsed = time.time() - now
+
             print()
             print('[*] Epoch %s' % epoch)
             print('[*] Avg Reward: %s' % avg_reward)
@@ -76,6 +82,13 @@ def train(log_dir, save_dir, train_for_epochs=-1):
             print('[*] Termination Rate: %s' % rate_terminated)
             print('[*] Solve Rate: %s' % rate_solved)
             print('[*] Fail Rate: %s' % rate_failed)
+            print('[*] Took %ss to run %s epochs' % (elapsed, log_every))
+
+            save_to = checkpoint_path(epoch)
+            ppo.save(save_to)
+            print('[*] Saving to %s' % save_to)
+
+            now = time.time()
             eps_rewards, eps_actions, eps_terminated = [], [], []
 
 if __name__ == '__main__':
