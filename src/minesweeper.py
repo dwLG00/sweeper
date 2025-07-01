@@ -28,8 +28,8 @@ class Cell:
     def is_flagged(self):
         return self.flagged
     
-    def display(self, clicked=False):
-        if self.uncovered:
+    def display(self, clicked=False, reveal=False):
+        if self.uncovered or reveal:
             if self.is_mine():
                 return '\033[31m' + MINE + '\033[0m'
             else:
@@ -93,6 +93,13 @@ class Board:
                     buffer.append(self.board[x][y].display())
             print(''.join(buffer))
 
+    def display_all(self):
+        for y in range(self.height):
+            buffer = []
+            for x in range(self.width):
+                buffer.append(self.board[x][y].display(reveal=True))
+            print(''.join(buffer))
+
     def click(self, x, y):
         # Return # of cells uncovered, or -1 if uncovered mine
         cell = self.board[x][y]
@@ -120,9 +127,8 @@ class Board:
                     return -1, True
             # do nothing
             return 0, False
-        
-    def safe_click(self):
-        # click somewhere guaranteed safe, with preference for lower-valued cells
+    
+    def safe_clicks(self):
         candidates = []
         maximum = 8
         for x in range(self.width):
@@ -133,6 +139,11 @@ class Board:
                     elif self.board[x][y].value < maximum:
                         candidates = [(x, y)]
                         maximum = self.board[x][y].value
+        return candidates
+
+    def safe_click(self):
+        # click somewhere guaranteed safe, with preference for lower-valued cells
+        candidates = self.safe_clicks()
         x, y = random.choice(candidates)
         self.click(x, y)
 
@@ -145,19 +156,15 @@ class Board:
     
     def model_state(self):
         l = []
-        for i in range(10):
-            if i == 8:
-                l.append(list(
-                    list(1 if not cell.is_uncovered() else 0 for cell in col) for col in self.board
-                ))
-            elif i == 9:
-                l.append(list(
-                    list(1 if cell.is_flagged() else 0 for cell in col) for col in self.board
-                ))
-            else:
-                l.append(list(
-                    list(1 if cell.is_uncovered() and cell.value == i else 0 for cell in col) for col in self.board
-                ))
+        l.append(list(
+            list(cell.value / 8 if not cell.is_mine() else -1.0 for cell in col) for col in self.board
+        ))
+        l.append(list(
+            list(1 if not cell.is_uncovered() else 0 for cell in col) for col in self.board
+        ))
+        l.append(list(
+            list(1 if cell.is_flagged() else 0 for cell in col) for col in self.board
+        ))
         return l
     
     def surrogate_eval(self):
@@ -172,3 +179,9 @@ class Board:
                     if all(not self.board[nx][ny].is_uncovered() for (nx, ny) in self.neighbor_coords(x, y)): # bad location
                         score -= 100
         return score / (self.width * self.height)
+    
+    def mask(self):
+        for x in range(self.width):
+            for y in range(self.height):
+                if self.board[x][y].is_uncovered():
+                    yield y * self.width + x

@@ -8,21 +8,21 @@ import time
 import torch
 from tqdm import tqdm
 
-def rollout(model: PPO, gym: MinesweeperGym, pretrain=False):
+def rollout(model: PPO, gym: MinesweeperGym, pretrain=False, mask=False):
     state = gym.reset()
     current_ep_reward = 0
     max_ep_len = model.w * model.h # any more and you are doing something really wrong
     terminated = False
     for n_actions in range(max_ep_len):
-        action = model.select_action(state)
-        state, reward, done = gym.step(action) if not pretrain else gym.early_epoch_step(action)
+        action = model.select_action(state, mask=gym.mask() if mask else None)
+        state, reward, done, won = gym.step(action) if not pretrain else gym.early_epoch_step(action)
         model.buffer.rewards.append(reward)
         model.buffer.is_terminals.append(done)
         current_ep_reward += reward
         if done:
             terminated = True
             break
-    return current_ep_reward, n_actions, terminated
+    return current_ep_reward, n_actions, terminated, won
 
 def pretrain(model: PPO, w, h, n, epochs=1, n_eps=10000):
     conv_layer = model.policy.conv_layer
@@ -56,7 +56,8 @@ def train(log_dir, save_dir, train_for_epochs=-1):
     K_epochs = 100
     update_eps = 4
     log_every = 40
-    pretrain_epochs = 0
+    pretrain_epochs = 10
+    ppo_pretrain_epochs = 0
     
     K_epochs = 100
     clip = 0.2
@@ -65,7 +66,7 @@ def train(log_dir, save_dir, train_for_epochs=-1):
     lr_critic = 0.001
     lr_conv = 0.001
 
-    width, height, n_mines = 50, 20, 299
+    width, height, n_mines = 50, 20, 199
     ppo = PPO(width, height, lr_actor, lr_critic, lr_conv, gamma, K_epochs, clip)
     gym = MinesweeperGym(width, height, n_mines)
 
@@ -81,7 +82,7 @@ def train(log_dir, save_dir, train_for_epochs=-1):
 
     checkpoint_path = lambda checkpoint_name: save_dir / ('PPO_%s.pth' % checkpoint_name)
 
-    pretrain(ppo, width, height, n_mines)
+    pretrain(ppo, width, height, n_mines, epochs=pretrain_epochs)
 
     print('[*] Starting Training')
     print('[H] K_epochs: %s\t update_eps: %s\t clip: %s\t gamma: %s' % (K_epochs, update_eps, clip, gamma))
@@ -92,12 +93,13 @@ def train(log_dir, save_dir, train_for_epochs=-1):
     iterator = itertools.count() if train_for_epochs < 0 else range(train_for_epochs)
 
     now = time.time()
-    eps_rewards, eps_actions, eps_terminated = [], [], []
+    eps_rewards, eps_actions, eps_terminated, eps_won = [], [], [], []
     for epoch in iterator:
-        eps_reward, n_actions, terminated = rollout(ppo, gym, pretrain=epoch<pretrain_epochs)
+        eps_reward, n_actions, terminated, won = rollout(ppo, gym, pretrain=epoch<ppo_pretrain_epochs)
         eps_rewards.append(eps_reward)
         eps_actions.append(n_actions)
         eps_terminated.append(terminated)
+        eps_won.append(won)
 
         if epoch % update_eps == update_eps - 1:
             ppo.update()
@@ -106,8 +108,8 @@ def train(log_dir, save_dir, train_for_epochs=-1):
             avg_reward = sum(eps_rewards) / log_every
             avg_actions = sum(eps_actions) / log_every
             rate_terminated = sum(1 if t else 0 for t in eps_terminated)
-            rate_solved = sum(1 if eps_rewards[i] >= 0 and eps_terminated[i] else 0 for i in range(log_every))
-            rate_failed = sum(1 if eps_rewards[i] < 0 and eps_terminated[i] else 0 for i in range(log_every))
+            rate_solved = sum(1 if eps_won[i] and eps_terminated[i] else 0 for i in range(log_every))
+            rate_failed = sum(1 if not eps_won[i] and eps_terminated[i] else 0 for i in range(log_every))
             elapsed = time.time() - now
 
             print()

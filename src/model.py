@@ -27,31 +27,36 @@ class RolloutBuffer:
 class MinesweeperConv(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv_layer = torch.nn.Conv2d(in_channels=10, out_channels=3, kernel_size=3, stride=1)
+        self.conv_layers = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels=3, out_channels=8, kernel_size=3, stride=1, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(in_channels=8, out_channels=8, kernel_size=3, stride=1, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(in_channels=8, out_channels=3, kernel_size=3, stride=1, padding=1),
+            torch.nn.ReLU()
+        )
 
     def forward(self, x):
-        x = self.conv_layer(x)
+        x = self.conv_layers(x)
         if len(x.shape) == 3: # no batch dim
             x = torch.unsqueeze(x, dim=0)
-        x = x.view(x.shape[0], -1) # shape should be (n, (w - 2) * (h - 2) * 3)
+        x = x.view(x.shape[0], -1) # shape should be (n, w * h * 2)
         return x
 
 
 class MinesweeperActor(torch.nn.Module):
     def __init__(self, w, h):
         super().__init__()
-        intermediate_dim = int(w * h * 2.5)
         self.actor_mlp = torch.nn.Sequential(
-            torch.nn.Linear((w - 2) * (h - 2) * 3, w * h * 3),
+            torch.nn.Linear(w * h * 3, w * h * 3),
             torch.nn.ReLU(),
-            torch.nn.Linear(w * h * 3, intermediate_dim),
+            torch.nn.Linear(w * h * 3, w * h * 3),
             torch.nn.ReLU(),
-            torch.nn.Linear(intermediate_dim, w * h * 2)
+            torch.nn.Linear(w * h * 3, w * h),
         )
 
-    def forward(self, conv_out):
-        v = self.actor_mlp(conv_out)
-        dist = Categorical(logits=v)
+    def forward(self, conv_out, mask=None):
+        dist = self.dist(conv_out, mask=mask)
         output = dist.sample()
         log_prob = dist.log_prob(output).detach()
         return output.detach(), log_prob
@@ -63,8 +68,12 @@ class MinesweeperActor(torch.nn.Module):
         return concatted_action, log_probs
         '''
     
-    def dist(self, conv_out):
-        return Categorical(logits=self.actor_mlp(conv_out))
+    def dist(self, conv_out, mask=None):
+        v = self.actor_mlp(conv_out)
+        if mask:
+            for index in mask:
+                v[index] = -torch.inf
+        return Categorical(logits=v)
     
     '''
     def dists(self, conv_out):
@@ -93,14 +102,14 @@ class MinesweeperActorCritic(torch.nn.Module):
 
         # critic
         self.critic = torch.nn.Sequential(
-            torch.nn.Linear((w - 2) * (h - 2) * 3, 500),
+            torch.nn.Linear(w * h * 3, w * h),
             torch.nn.ReLU(),
-            torch.nn.Linear(500, 1)
+            torch.nn.Linear(w * h, 1)
         )
     
-    def act(self, state):
+    def act(self, state, mask=None):
         v = self.conv_layer(state)
-        action, log_probs = self.actor(v)
+        action, log_probs = self.actor(v, mask=mask)
         state_val = self.critic(v)
         return action, log_probs, state_val.detach()
     
@@ -133,10 +142,10 @@ class PPO:
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.loss = torch.nn.MSELoss()
 
-    def select_action(self, state):
+    def select_action(self, state, mask=None):
         with torch.no_grad():
             state = torch.FloatTensor(state).to(device)
-            action, action_logprob, state_val = self.policy_old.act(state)
+            action, action_logprob, state_val = self.policy_old.act(state, mask=mask)
         
         self.buffer.states.append(state)
         self.buffer.actions.append(action)
